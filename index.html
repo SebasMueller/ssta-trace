@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Trace the Roads · SSTA Workshop 3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Carlito:wght@400;700&family=Open+Sans:wght@700&display=swap">
+<link rel="stylesheet" href="style.css">
+<style>body { margin: 0; }</style>
+</head>
+<body>
+<div class="wrap">
+  <section id="intro">
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="eyebrow"><b>SSTA Workshop 3</b> · Super-resolution use cases · Metro Manila</div>
+      <h1>Trace the roads you can see</h1>
+      <p>You get two satellite images of neighbourhoods in Quezon City, each 500 m across. Draw a straight line along every road you can make out: press, drag and let go. Then we compare your lines with the real road map.</p>
+      <ol class="steps">
+        <li><span><b>Image 1:</b> 60 seconds. Draw a line along each road. For a bend, start a new line where the last one ended: it snaps on.</span></li>
+        <li><span><b>Image 2:</b> another 60 seconds, a different neighbourhood.</span></li>
+        <li><span><b>Your score:</b> how many of the roads you found on each image. Your lines are added, without your name, to the room's results.</span></li>
+      </ol>
+      <div class="stage s2" style="max-width:320px"><img id="introImg" alt="Example: a Sentinel-2 image of Quezon City, enlarged"></div>
+      <div class="bar"><button class="go" id="start">Start tracing</button><span class="muted">Lines don't have to be perfect. You can stop early with Done.</span></div>
+    </div>
+  </section>
+
+  <section id="trace" hidden>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="tag"><strong id="tStep">Image 1 of 2</strong><span class="chip" id="tChip"></span></div>
+      <div class="stage" id="tStage"><img id="tImg" alt=""><canvas id="tCan" width="600" height="600" aria-label="Drawing area: press, drag and release to draw a straight line along a road"></canvas>
+        <div class="scale"><i></i><span>100 m</span></div></div>
+      <div class="bar">
+        <div class="timer"><div class="track"><b id="tBar"></b></div><span id="tSec">60 s</span></div>
+        <button id="undo">Undo</button><button id="clear">Clear</button><button class="go" id="done">Done</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="result" hidden>
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div class="eyebrow"><b>Your score</b></div>
+      <h2 id="rHead"></h2>
+      <div class="cards">
+        <div class="card s2"><span class="chip s2" style="align-self:flex-start">Sentinel-2 · 10 m</span><span class="big" id="rBlur"></span><span>of the roads found</span><span class="muted" id="rBlurP"></span></div>
+        <div class="card sr"><span class="chip sr" style="align-self:flex-start">Super-resolved · 2.5 m</span><span class="big" id="rSharp"></span><span>of the roads found</span><span class="muted" id="rSharpP"></span></div>
+      </div>
+      <p>Both images come from the same free Sentinel-2 satellite. The second was super-resolved by our model before you traced it. Below, your lines are drawn on a real high-resolution image of each neighbourhood.</p>
+      <div class="legend"><span style="--c:var(--yours)">your lines</span><span style="--c:var(--found)">roads you found</span><span style="--c:var(--missed)">roads you missed</span></div>
+      <div class="pair">
+        <figure><div class="stage real"><img id="rImg0" alt=""><canvas id="rCan0" width="600" height="600"></canvas></div><figcaption id="rCap0"></figcaption></figure>
+        <figure><div class="stage real"><img id="rImg1" alt=""><canvas id="rCan1" width="600" height="600"></canvas></div><figcaption id="rCap1"></figcaption></figure>
+      </div>
+      <p class="small" id="sent"></p>
+      <p class="small">A road counts as found when one of your lines runs within 12 m of it. Driveways and footpaths are left out. Roads: © OpenStreetMap contributors. Real images: Google satellite imagery, averaged to 2.5 m. Sentinel-2: contains modified Copernicus Sentinel data 2025.</p>
+      <div class="bar"><button id="again">Trace again</button></div>
+    </div>
+  </section>
+</div>
+<script src="areas.js"></script>
+<script src="config.js"></script>
+<script src="score.js"></script>
+<script>
+const SECONDS = 60, SNAP = 14, MINLEN = 6;
+let plan, cur, strokes = [], active = null, timer, left = 0, results, attempt = 0;
+const $ = id => document.getElementById(id);
+$("introImg").src = AREAS.A.img.blurry;
+let uid; try { uid = localStorage.getItem("ssta-uid"); if (!uid) { uid = Math.random().toString(36).slice(2, 10); localStorage.setItem("ssta-uid", uid); } } catch (e) { uid = Math.random().toString(36).slice(2, 10); }
+
+function newPlan() {
+  const first = Math.random() < 0.5 ? "A" : "B";
+  return [{ area: first, kind: "blurry" }, { area: first === "A" ? "B" : "A", kind: "sharp" }];
+}
+function show(id) { for (const s of ["intro", "trace", "result"]) $(s).hidden = s !== id; window.scrollTo(0, 0); }
+function begin(i) {
+  cur = i; strokes = []; active = null;
+  const p = plan[i], s2 = p.kind === "blurry";
+  $("tStep").textContent = `Image ${i + 1} of 2`;
+  $("tChip").textContent = s2 ? "Sentinel-2 · 10 m pixels, enlarged" : "Super-resolved · 2.5 m pixels";
+  $("tChip").className = "chip " + (s2 ? "s2" : "sr");
+  $("tStage").className = "stage " + (s2 ? "s2" : "sr");
+  $("tImg").src = AREAS[p.area].img[p.kind]; $("tImg").alt = $("tChip").textContent;
+  redraw(); left = SECONDS; tick();
+  clearInterval(timer); timer = setInterval(() => { left -= 1; tick(); if (left <= 0) finish(); }, 1000);
+  show("trace");
+}
+function tick() { $("tSec").textContent = `${Math.max(left, 0)} s`; $("tBar").style.width = `${100 * Math.max(left, 0) / SECONDS}%`; }
+function finish() {
+  clearInterval(timer);
+  if (active) { if (Math.hypot(active[1][0] - active[0][0], active[1][1] - active[0][1]) >= MINLEN) strokes.push(active); active = null; }
+  plan[cur].strokes = strokes;
+  if (cur === 0) begin(1); else score();
+}
+// Straight lines: press = start, drag = preview, release = end. Ends snap to the ends of earlier lines.
+const can = $("tCan"), ctx = can.getContext("2d");
+function pos(e) { const r = can.getBoundingClientRect(); return [(e.clientX - r.left) * 600 / r.width, (e.clientY - r.top) * 600 / r.height]; }
+const clampP = p => [Math.min(600, Math.max(0, p[0])), Math.min(600, Math.max(0, p[1]))];
+function snap(p) {
+  let best = null, bd = SNAP;
+  for (const s of strokes) for (const q of s) { const d = Math.hypot(p[0] - q[0], p[1] - q[1]); if (d < bd) { bd = d; best = q; } }
+  return best ? [best[0], best[1]] : p;
+}
+can.addEventListener("pointerdown", e => { if (left <= 0) return; e.preventDefault(); can.setPointerCapture(e.pointerId);
+  const p = snap(clampP(pos(e))); active = [p, p]; redraw(); });
+can.addEventListener("pointermove", e => { if (!active) return; active[1] = clampP(pos(e)); redraw(); });
+can.addEventListener("pointerup", () => { if (!active) return; const end = snap(active[1]);
+  if (Math.hypot(end[0] - active[0][0], end[1] - active[0][1]) >= MINLEN) strokes.push([active[0], end]);
+  active = null; redraw(); });
+can.addEventListener("pointercancel", () => { active = null; redraw(); });
+function redraw() {
+  ctx.clearRect(0, 0, 600, 600);
+  const all = strokes.concat(active ? [active] : []);
+  for (const s of all) { polyline(ctx, s, "rgba(0,0,0,.6)", 8); polyline(ctx, s, css("--trace"), 4); }
+  ctx.fillStyle = css("--trace"); ctx.strokeStyle = "rgba(0,0,0,.6)"; ctx.lineWidth = 2;
+  for (const s of all) for (const q of s) { ctx.beginPath(); ctx.arc(q[0], q[1], 5, 0, 7); ctx.fill(); ctx.stroke(); }
+}
+$("undo").onclick = () => { strokes.pop(); redraw(); };
+$("clear").onclick = () => { strokes = []; redraw(); };
+$("done").onclick = finish;
+$("start").onclick = $("again").onclick = () => { plan = newPlan(); attempt += 1; begin(0); };
+
+function send(rs) {
+  if (!ENDPOINT) { $("sent").textContent = ""; return; }
+  const body = JSON.stringify({ session: SESSION, id: uid, attempt, plan: rs.map(r => ({ area: r.area, kind: r.kind,
+    recall: +r.recall.toFixed(4), precision: r.precision === null ? null : +r.precision.toFixed(4),
+    lines: r.strokes.map(s => s.flat().map(Math.round)) })) });
+  $("sent").textContent = "Sending your lines to the room…";
+  const go = k => fetch(ENDPOINT, { method: "POST", mode: "no-cors", headers: { "Content-Type": "text/plain;charset=utf-8" }, body, keepalive: true })
+    .then(() => { $("sent").textContent = "Your lines were added to the room's results."; })
+    .catch(() => { if (k < 3) setTimeout(() => go(k + 1), 2000 * (k + 1)); else $("sent").textContent = "Could not reach the results board. Your score above still counts."; });
+  go(0);
+}
+function score() {
+  results = plan.map(p => ({ ...p, ...evaluate(p.area, p.strokes) }));
+  const [b, s] = results;
+  $("rBlur").textContent = pct(b.recall); $("rSharp").textContent = pct(s.recall);
+  const prec = r => r.precision === null ? "You drew no lines." : `${pct(r.precision)} of your lines were on a real road.`;
+  $("rBlurP").textContent = prec(b); $("rSharpP").textContent = prec(s);
+  const ratio = b.recall > 0.005 ? s.recall / b.recall : null;
+  $("rHead").textContent = s.recall > b.recall
+    ? (ratio && ratio >= 1.5 ? `You found ${ratio.toFixed(1)} times as many roads on the super-resolved image` : "You found more roads on the super-resolved image")
+    : "You found as many roads on the blurry image. Try again, slowly?";
+  results.forEach((r, i) => {
+    $("rImg" + i).src = AREAS[r.area].img.real; $("rImg" + i).alt = "Real high-resolution image of the same neighbourhood";
+    $("rCap" + i).innerHTML = `<b>Traced on ${r.kind === "blurry" ? "Sentinel-2" : "the super-resolved image"}</b> · drawn on the real image`;
+    const c = $("rCan" + i).getContext("2d"); c.clearRect(0, 0, 600, 600);
+    const shown = r.segs.filter(([, , ok, m]) => m || ok);   // outlines first, then colours, so the pieces join up
+    for (const [p, q, ok] of shown) polyline(c, [p, q], "rgba(0,0,0,.45)", ok ? 9 : 5);
+    for (const [p, q, ok] of shown) polyline(c, [p, q], ok ? css("--found") : css("--missed"), ok ? 6 : 3);
+    for (const st of r.strokes) { polyline(c, st, "rgba(0,0,0,.6)", 5); polyline(c, st, css("--yours"), 2.5); }
+  });
+  show("result"); send(results);
+}
+</script>
+</body>
+</html>
