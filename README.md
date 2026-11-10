@@ -1,6 +1,6 @@
 # Trace the roads (SSTA Workshop 3)
 
-Participants trace roads on a Sentinel-2 image and on a super-resolved image of Quezon City, then see how many roads they found.
+Participants trace roads on a Sentinel-2 image and on a super-resolved image of two Metro Manila neighbourhoods, then see how many roads they found.
 The presenter page shows everyone's results live.
 
 - Participant page: `index.html`
